@@ -18,7 +18,7 @@
 img{max-width:100%}
 .anon .side,.anon .tabs{display:none!important}
 .anon .app{grid-template-columns:1fr}
-.login{max-width:420px;margin:8vh auto 0;display:flex;flex-direction:column;gap:16px}
+.login{width:100%;max-width:420px;margin:8vh auto 0;display:flex;flex-direction:column;gap:16px}
 .login .brand{padding:0;font-size:1.5rem}
 .login form{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:20px;display:flex;flex-direction:column;gap:12px}
 </style>
@@ -1035,7 +1035,7 @@ async function olvide(){
   const email=$('#l_email').value.trim();ui.lastEmail=email;lmsg('lerr','');lmsg('lok','');
   if(!email)return lmsg('lerr','Escribí tu email arriba y tocá de nuevo "Olvidé mi contraseña".');
   const{error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
-  if(error)return lmsg('lerr','No se pudo enviar el mail. Esperá un minuto y probá de nuevo.');
+  if(error)return lmsg('lerr',/rate|limit|security/i.test(error.message)?'Ya se mandaron varios mails hace poco y hay que esperar un rato (hasta una hora). Usá el último mail que te llegó, o probá más tarde una sola vez.':'No se pudo enviar el mail. Revisá tu conexión y probá de nuevo.');
   lmsg('lok','Listo: te mandamos un mail. Abrilo en este mismo dispositivo, tocá el enlace y vas a poder elegir una contraseña nueva.');
 }
 document.addEventListener('submit',async e=>{

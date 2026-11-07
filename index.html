@@ -389,6 +389,8 @@ let raf=0;const schedule=()=>{if(!raf)raf=requestAnimationFrame(()=>{raf=0;rende
 function render(){
   navHTML();
   const m=$('#main');
+  if(ui.recover){document.body.classList.add('anon');m.innerHTML=vNuevaClave();return}
+  if(session)document.body.classList.remove('anon');
   if(ui.status==='login'){m.innerHTML=vLogin();return}
   if(ui.status==='nodb'){m.innerHTML=`<div class="head"><div><h1>Mis Alquileres</h1></div></div><div class="note"><span>Para guardar tus datos, abrí esta app desde claude.ai con tu cuenta iniciada.</span></div>`;return}
   if(ui.status==='error'){m.innerHTML=`<div class="head"><div><h1>Mis Alquileres</h1></div></div><div class="note"><span>No se pudieron cargar los datos. Volvé a abrir la app en unos minutos.</span></div>`;return}
@@ -927,6 +929,7 @@ document.addEventListener('click',async e=>{
   try{switch(act){
     case 'chip':ui[b.dataset.key]=b.dataset.v;render();break;
     case 'signup':await signup();break;
+    case 'olvide':await olvide();break;
     case 'salir':await sb.auth.signOut();break;
     case 'ver-doc':e.preventDefault();await verDoc(id);break;
     case 'new':if(!db)return;openForm(col,null,b.dataset.inm?{inmuebleId:b.dataset.inm}:{});break;
@@ -1011,8 +1014,34 @@ function vLogin(){
     <p class="ferr" id="lerr" hidden></p><p class="hint" id="lok" hidden></p>
     <button class="btn" type="submit" id="l_go" style="justify-content:center">Entrar</button>
     <button class="btn ghost" type="button" data-act="signup" style="justify-content:center">Es mi primera vez: crear mi acceso</button>
+    <button class="back" type="button" data-act="olvide" style="align-self:center">Olvidé mi contraseña</button>
   </form></div>`;
 }
+function vNuevaClave(){
+  return `<div class="login"><div class="brand"><i aria-hidden="true">MA</i>Mis Alquileres</div>
+  <form id="nf" novalidate>
+    <h2>Elegí tu contraseña nueva</h2>
+    <div class="fld"><label for="n_pass">Contraseña nueva</label><input id="n_pass" type="password" autocomplete="new-password" minlength="6"><small>Al menos 6 caracteres. Anotala en un lugar seguro.</small></div>
+    <p class="ferr" id="nerr" hidden></p>
+    <button class="btn" type="submit" id="n_go" style="justify-content:center">Guardar contraseña</button>
+  </form></div>`;
+}
+async function olvide(){
+  const email=$('#l_email').value.trim();ui.lastEmail=email;lmsg('lerr','');lmsg('lok','');
+  if(!email)return lmsg('lerr','Escribí tu email arriba y tocá de nuevo "Olvidé mi contraseña".');
+  const{error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
+  if(error)return lmsg('lerr','No se pudo enviar el mail. Esperá un minuto y probá de nuevo.');
+  lmsg('lok','Listo: te mandamos un mail. Abrilo en este mismo dispositivo, tocá el enlace y vas a poder elegir una contraseña nueva.');
+}
+document.addEventListener('submit',async e=>{
+  if(e.target.id!=='nf')return;e.preventDefault();
+  const p=$('#n_pass').value,er=$('#nerr');er.hidden=true;
+  if(p.length<6){er.textContent='Tiene que tener al menos 6 caracteres.';er.hidden=false;return}
+  const b=$('#n_go');b.disabled=true;b.textContent='Guardando…';
+  const{error}=await sb.auth.updateUser({password:p});
+  if(error){b.disabled=false;b.textContent='Guardar contraseña';er.textContent='No se pudo guardar. Probá con otra contraseña.';er.hidden=false;return}
+  ui.recover=false;history.replaceState(null,'',location.pathname);toast('Contraseña nueva guardada');render();
+});
 function lmsg(id,t){const e=$('#'+id);if(e){e.textContent=t;e.hidden=!t}}
 document.addEventListener('submit',async e=>{
   if(e.target.id!=='lf')return;e.preventDefault();
@@ -1050,7 +1079,9 @@ async function init(){
   if(session)startData();else{ui.status='login';document.body.classList.add('anon')}
   render();
   sb.auth.onAuthStateChange((ev,s)=>{const was=!!session;session=s;
+    if(ev==='PASSWORD_RECOVERY'){ui.recover=true;if(!was&&s)startData();render();return}
     if(s&&!was){startData();render()}else if(!s&&was){stopData();render()}});
+  if(/type=recovery/.test(location.hash)){ui.recover=true;render()}
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&session&&db)COLS.forEach(c=>loadCol(c).catch(()=>{}))});
   if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 }

@@ -240,7 +240,7 @@ tfoot td{font-weight:600}
   <nav class="side" aria-label="Secciones">
     <div class="brand"><i aria-hidden="true">MA</i>Mis Alquileres</div>
     <div class="nav" id="nav"></div>
-    <div class="foot"><span id="who"></span><br><button class="btn sm ghost" data-act="salir" style="margin-top:8px">Cerrar sesión</button></div>
+    <div class="foot"><span id="who"></span><br><button class="btn sm ghost" data-act="cambiar-clave" style="margin-top:8px">Cambiar contraseña</button> <button class="btn sm ghost" data-act="salir" style="margin-top:8px">Cerrar sesión</button></div>
   </nav>
   <main><div class="wrap" id="main"></div></main>
 </div>
@@ -426,7 +426,7 @@ function vPanel(){
   const hoyTxt=new Date().toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long'});
   return `
   ${ej&&ui.canWrite?`<div class="note info"><span>Estás viendo <b>datos de ejemplo</b> para que pruebes la app. Cuando quieras empezar con lo tuyo, borralos.</span><button class="btn sm ${ui.armEj?'danger armed':'ghost'}" data-act="borrar-ej">${ui.armEj?'Confirmar: borrar ejemplos':'Borrar ejemplos'}</button></div>`:''}
-  <div class="head"><div><h1>Vencimientos y alertas</h1><p>${hoyTxt.charAt(0).toUpperCase()+hoyTxt.slice(1)}</p></div><button class="btn sm ghost" data-act="salir">Cerrar sesión</button></div>
+  <div class="head"><div><h1>Vencimientos y alertas</h1><p>${hoyTxt.charAt(0).toUpperCase()+hoyTxt.slice(1)}</p></div><div class="row-actions"><button class="btn sm ghost" data-act="cambiar-clave">Cambiar contraseña</button><button class="btn sm ghost" data-act="salir">Cerrar sesión</button></div></div>
   <div class="kpis">
     <div class="kpi"><span>Urgentes</span><b class="${urg?'crit':''}">${urg}</b><small>vencidos o a menos de 15 días</small></div>
     <div class="kpi"><span>Alquileres adeudados</span><b class="num ${Object.keys(deuda).length?'crit':''}" style="font-size:1.25rem">${deudaTxt}</b><small>cuotas vencidas, con punitorios</small></div>
@@ -930,6 +930,8 @@ document.addEventListener('click',async e=>{
     case 'chip':ui[b.dataset.key]=b.dataset.v;render();break;
     case 'signup':await signup();break;
     case 'olvide':await olvide();break;
+    case 'cambiar-clave':ui.recover=true;render();window.scrollTo(0,0);break;
+    case 'cancel-clave':ui.recover=false;render();break;
     case 'salir':await sb.auth.signOut();break;
     case 'ver-doc':e.preventDefault();await verDoc(id);break;
     case 'new':if(!db)return;openForm(col,null,b.dataset.inm?{inmuebleId:b.dataset.inm}:{});break;
@@ -974,6 +976,8 @@ document.addEventListener('click',async e=>{
 
 /* ---------- conexión con Supabase ---------- */
 const SB_URL='https://iqrmjysewmjqtsaphlat.supabase.co',SB_KEY='sb_publishable_O42WcA3peXoxGjLQLDWgOw_kcmD9EJL';
+/* Se lee antes de crear el cliente: Supabase borra estos datos de la dirección al procesarlos */
+const VIENE_DE_RECUPERAR=/type=recovery/.test(location.hash+location.search);
 const sb=window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
 let session=null;
 const cache={},listeners={};
@@ -1024,6 +1028,7 @@ function vNuevaClave(){
     <div class="fld"><label for="n_pass">Contraseña nueva</label><input id="n_pass" type="password" autocomplete="new-password" minlength="6"><small>Al menos 6 caracteres. Anotala en un lugar seguro.</small></div>
     <p class="ferr" id="nerr" hidden></p>
     <button class="btn" type="submit" id="n_go" style="justify-content:center">Guardar contraseña</button>
+    <button class="btn ghost" type="button" data-act="cancel-clave" style="justify-content:center">Ahora no</button>
   </form></div>`;
 }
 async function olvide(){
@@ -1075,13 +1080,17 @@ function startData(){
 function stopData(){COLS.forEach(c=>{S[c]={};cache[c]={};delete listeners[c]});db=null;ui.status='login';ui.detail=null;document.body.classList.add('anon')}
 async function init(){
   ui.view=VIEWS.some(v=>v[0]===location.hash.slice(1))?location.hash.slice(1):'panel';
-  const{data}=await sb.auth.getSession();session=data.session;
-  if(session)startData();else{ui.status='login';document.body.classList.add('anon')}
+  if(VIENE_DE_RECUPERAR)ui.recover=true;
+  let listo=false;
+  sb.auth.onAuthStateChange((ev,s)=>{
+    if(ev==='PASSWORD_RECOVERY')ui.recover=true;
+    if(!listo)return;
+    const was=!!session;session=s;
+    if(s&&!was){startData();render()}else if(!s&&was){ui.recover=false;stopData();render()}else render();
+  });
+  const{data}=await sb.auth.getSession();session=data.session;listo=true;
+  if(session)startData();else{ui.status='login';ui.recover=false;document.body.classList.add('anon')}
   render();
-  sb.auth.onAuthStateChange((ev,s)=>{const was=!!session;session=s;
-    if(ev==='PASSWORD_RECOVERY'){ui.recover=true;if(!was&&s)startData();render();return}
-    if(s&&!was){startData();render()}else if(!s&&was){stopData();render()}});
-  if(/type=recovery/.test(location.hash)){ui.recover=true;render()}
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&session&&db)COLS.forEach(c=>loadCol(c).catch(()=>{}))});
   if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 }

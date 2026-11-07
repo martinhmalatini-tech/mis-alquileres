@@ -150,6 +150,13 @@ tr.paid td{color:var(--muted)}
 
 .empty{border:1.5px dashed var(--line);border-radius:var(--r);padding:28px 20px;text-align:center;color:var(--muted);display:flex;flex-direction:column;gap:12px;align-items:center}
 .empty b{color:var(--ink);font-size:1.05rem}
+.cx{display:flex;flex-direction:column;gap:12px;padding:16px;background:var(--sunk);border-radius:var(--r)}
+.cxh{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:10px}
+.cxh h2{font-size:1.3rem}
+.cxh p{margin:2px 0 0;color:var(--muted);font-size:.9rem}
+.cx .cards{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+.btn.foto{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+.btn.foto svg{width:18px;height:18px}
 .note{background:var(--warn-soft);color:var(--ink);border-radius:var(--r);padding:12px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
 .note.info{background:var(--info-soft)}
 .muted{color:var(--muted)}
@@ -246,6 +253,7 @@ tfoot td{font-weight:600}
 </div>
 <nav class="tabs" id="tabs" aria-label="Secciones"></nav>
 <dialog id="dlg"></dialog>
+<input type="file" id="fotoIn" accept="image/*,application/pdf" hidden>
 <div id="toast" role="status" hidden></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -301,13 +309,17 @@ const L={};for(const k in OPT)L[k]=Object.fromEntries(OPT[k]);
 const SVC_DEF=[['expensas','inquilino'],['luz','inquilino'],['agua','inquilino'],['gas','inquilino'],['tasa_municipal','propietario'],['inmobiliario','propietario']];
 
 /* ---------- estado ---------- */
-const COLS=['personas','inmuebles','contratos','servicios','arreglos'];
+const COLS=['complejos','personas','inmuebles','contratos','servicios','arreglos'];
 const S={};COLS.forEach(c=>S[c]={});
 const ui={view:'panel',detail:null,filtro:'todas',conF:'vigente',svcF:'pend',arrF:'abiertos',rolF:'todos',status:'loading',canWrite:true,armFin:null,armEj:false,anio:HOY.slice(0,4)};
 let db=null,assets=null,downloads=null;
 
-const sorted=(col,key)=>Object.values(S[col]).sort((a,b)=>String(a[key]||'').localeCompare(String(b[key]||''),'es'));
-const P=id=>S.personas[id], I=id=>S.inmuebles[id];
+const sortBy=(arr,key)=>arr.sort((a,b)=>String(a[key]||'').localeCompare(String(b[key]||''),'es',{numeric:true}));
+const sorted=(col,key)=>sortBy(Object.values(S[col]),key);
+const P=id=>S.personas[id], I=id=>S.inmuebles[id], CX=id=>id?S.complejos[id]:null;
+const unidadesDe=cid=>sortBy(Object.values(S.inmuebles).filter(i=>i.complejoId===cid),'alias');
+const nombreCorto=i=>{const cx=CX(i.complejoId);return cx&&String(i.alias||'').startsWith(cx.nombre+' · ')?i.alias.slice(cx.nombre.length+3):i.alias};
+const norm=s=>String(s??'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
 const nom=id=>P(id)?.nombre||'—';
 const ali=id=>I(id)?.alias||'Departamento borrado';
 const vigente=inmId=>Object.values(S.contratos).find(c=>c.inmuebleId===inmId&&c.estado==='vigente');
@@ -426,7 +438,7 @@ function vPanel(){
   const hoyTxt=new Date().toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long'});
   return `
   ${ej&&ui.canWrite?`<div class="note info"><span>Estás viendo <b>datos de ejemplo</b> para que pruebes la app. Cuando quieras empezar con lo tuyo, borralos.</span><button class="btn sm ${ui.armEj?'danger armed':'ghost'}" data-act="borrar-ej">${ui.armEj?'Confirmar: borrar ejemplos':'Borrar ejemplos'}</button></div>`:''}
-  <div class="head"><div><h1>Vencimientos y alertas</h1><p>${hoyTxt.charAt(0).toUpperCase()+hoyTxt.slice(1)}</p></div><div class="row-actions"><button class="btn sm ghost" data-act="cambiar-clave">Cambiar contraseña</button><button class="btn sm ghost" data-act="salir">Cerrar sesión</button></div></div>
+  <div class="head"><div><h1>Vencimientos y alertas</h1><p>${hoyTxt.charAt(0).toUpperCase()+hoyTxt.slice(1)}</p></div><div class="row-actions">${fotoBtn()}<button class="btn sm ghost" data-act="cambiar-clave">Cambiar contraseña</button><button class="btn sm ghost" data-act="salir">Cerrar sesión</button></div></div>
   <div class="kpis">
     <div class="kpi"><span>Urgentes</span><b class="${urg?'crit':''}">${urg}</b><small>vencidos o a menos de 15 días</small></div>
     <div class="kpi"><span>Alquileres adeudados</span><b class="num ${Object.keys(deuda).length?'crit':''}" style="font-size:1.25rem">${deudaTxt}</b><small>cuotas vencidas, con punitorios</small></div>
@@ -434,24 +446,37 @@ function vPanel(){
     <div class="kpi"><span>Ocupación</span><b>${ocup} / ${inms.length}</b><small>departamentos alquilados</small></div>
   </div>
   ${chips('filtro',[['todas','Todas ('+al.length+')'],['alta','Urgentes'],['media','Atención'],['baja','Para tener en cuenta']])}
-  ${!inms.length?empty('Todavía no cargaste departamentos','Empezá por tus departamentos, después cargá los contratos y los impuestos. Las alertas aparecen solas.',ui.canWrite?'<a class="btn" href="#inmuebles">Ir a Departamentos</a>':'')
+  ${!inms.length?empty('Todavía no cargaste propiedades','Empezá por tus complejos (por ejemplo "La Juana, 4 departamentos"), después cargá los contratos y los impuestos. Las alertas aparecen solas.',ui.canWrite?'<a class="btn" href="#inmuebles">Cargar un complejo</a>':'')
    :vis.length?`<div class="list">${vis.map(alertRow).join('')}</div>`:empty('Todo al día','No hay vencimientos en los próximos días ni arreglos abiertos.')}`;
 }
 
+function cardInm(i,corto){
+  const e=estadoInm(i),c=vigente(i.id);
+  const pend=Object.values(S.servicios).filter(s=>s.inmuebleId===i.id&&!s.pagado&&s.vence&&dias(s.vence)<=10).length;
+  const arr=Object.values(S.arreglos).filter(a=>a.inmuebleId===i.id&&a.estado!=='resuelto').length;
+  const deb=c?deudaMeses(c):0;
+  return `<button class="card" data-act="det-inm" data-id="${esc(i.id)}">
+    <div class="t"><h2>${esc(corto?nombreCorto(i):i.alias)}</h2><span class="pill ${e==='alquilado'?'p-ok':e==='mantenimiento'?'p-media':'p-neutral'}">${L.estadoInm[e]}</span></div>
+    ${corto?'':`<p>${esc(i.direccion||'')}${i.localidad?', '+esc(i.localidad):''}</p>`}
+    <p>${c?`${esc(nom(c.inquilinoId))}<br><span class="num">${money(c.monto,c.moneda)}</span>/mes · hasta ${fmtF(c.fin)}`:'Sin contrato vigente'}</p>
+    <div class="meta">${deb?`<span class="pill p-alta">Debe ${deb} ${deb>1?'meses':'mes'}</span>`:''}${pend?`<span class="pill p-media">${pend} por pagar</span>`:''}${arr?`<span class="pill p-baja">${arr} ${arr>1?'arreglos':'arreglo'}</span>`:''}</div>
+  </button>`;
+}
 function vInmuebles(){
-  const list=sorted('inmuebles','alias');
-  return `<div class="head"><div><h1>Departamentos</h1><p>${list.length} cargados</p></div>${addBtn('inmuebles','Nuevo departamento')}</div>
-  ${list.length?`<div class="cards">${list.map(i=>{const e=estadoInm(i),c=vigente(i.id);
-    const pend=Object.values(S.servicios).filter(s=>s.inmuebleId===i.id&&!s.pagado&&s.vence&&dias(s.vence)<=10).length;
-    const arr=Object.values(S.arreglos).filter(a=>a.inmuebleId===i.id&&a.estado!=='resuelto').length;
-    const deb=c?deudaMeses(c):0;
-    return `<button class="card" data-act="det-inm" data-id="${esc(i.id)}">
-      <div class="t"><h2>${esc(i.alias)}</h2><span class="pill ${e==='alquilado'?'p-ok':e==='mantenimiento'?'p-media':'p-neutral'}">${L.estadoInm[e]}</span></div>
-      <p>${esc(i.direccion||'')}${i.localidad?', '+esc(i.localidad):''}</p>
-      <p>${c?`Inquilino: ${esc(nom(c.inquilinoId))} · hasta ${fmtF(c.fin)}`:'Sin contrato vigente'}</p>
-      <div class="meta">${deb?`<span class="pill p-alta">Debe ${deb} ${deb>1?'meses':'mes'}</span>`:''}${pend?`<span class="pill p-media">${pend} por pagar</span>`:''}${arr?`<span class="pill p-baja">${arr} ${arr>1?'arreglos':'arreglo'}</span>`:''}</div>
-    </button>`}).join('')}</div>`
-  :empty('Sin departamentos','Cargá cada departamento con su dirección y propietario.',addBtn('inmuebles','Cargar el primero'))}`;
+  const cxs=sorted('complejos','nombre'),inms=Object.values(S.inmuebles);
+  const sueltos=sortBy(inms.filter(i=>!CX(i.complejoId)),'alias');
+  const btns=ui.canWrite?`<div class="row-actions">${fotoBtn()}<button class="btn" data-act="new" data-col="complejos">+ Nuevo complejo</button><button class="btn ghost" data-act="new" data-col="inmuebles">+ Depto suelto</button></div>`:'';
+  const seccion=cx=>{const us=unidadesDe(cx.id),alq=us.filter(i=>estadoInm(i)==='alquilado');
+    const renta={};alq.forEach(i=>{const c=vigente(i.id);if(c)renta[c.moneda||'ARS']=(renta[c.moneda||'ARS']||0)+(+c.monto||0)});
+    return `<section class="cx"><div class="cxh"><div><h2>${esc(cx.nombre)}</h2>
+      <p>${[cx.direccion,cx.localidad].filter(Boolean).map(esc).join(', ')||'Sin dirección cargada'}</p>
+      <p>${alq.length} de ${us.length} alquilados · Alquiler total <span class="num">${moneyMap(renta)}</span>/mes${cx.inmobiliaria?` · Administra: ${esc(cx.inmobiliaria)}${cx.inmobiliariaTel?' ('+esc(cx.inmobiliariaTel)+')':''}`:''}</p></div>
+      ${ui.canWrite?`<div class="row-actions"><button class="btn sm ghost" data-act="edit" data-col="complejos" data-id="${esc(cx.id)}">Editar complejo</button><button class="btn sm ghost" data-act="new" data-col="inmuebles" data-cx="${esc(cx.id)}">+ Departamento</button></div>`:''}</div>
+      ${us.length?`<div class="cards">${us.map(i=>cardInm(i,true)).join('')}</div>`:'<p class="muted">Este complejo no tiene departamentos todavía.</p>'}</section>`};
+  return `<div class="head"><div><h1>Propiedades</h1><p>${cxs.length} ${cxs.length===1?'complejo':'complejos'} · ${inms.length} ${inms.length===1?'departamento':'departamentos'}</p></div>${btns}</div>
+  ${cxs.map(seccion).join('')}
+  ${sueltos.length?`${cxs.length?'<h3>Departamentos sin complejo</h3>':''}<div class="cards">${sueltos.map(i=>cardInm(i,false)).join('')}</div>`:''}
+  ${!cxs.length&&!sueltos.length?empty('Todavía no cargaste propiedades','Cargá un complejo con su nombre y cuántos departamentos tiene: la app crea Depto 1, Depto 2… y después le cargás el contrato a cada uno.',ui.canWrite?'<button class="btn" data-act="new" data-col="complejos">Cargar el primer complejo</button>':''):''}`;
 }
 
 function detInmueble(i){
@@ -459,12 +484,14 @@ function detInmueble(i){
   const svc=Object.values(S.servicios).filter(s=>s.inmuebleId===i.id&&!s.pagado).sort((a,b)=>String(a.vence).localeCompare(String(b.vence)));
   const arr=Object.values(S.arreglos).filter(a=>a.inmuebleId===i.id&&a.estado!=='resuelto');
   const hist=Object.values(S.contratos).filter(x=>x.inmuebleId===i.id&&x.estado!=='vigente').sort((a,b)=>String(b.inicio).localeCompare(String(a.inicio)));
-  return `<button class="back" data-act="back">← Departamentos</button>
-  <div class="head"><div><h1>${esc(i.alias)}</h1><p>${esc(i.direccion||'')}${i.localidad?', '+esc(i.localidad):''}</p></div>
+  const cx=CX(i.complejoId),dir=i.direccion||cx?.direccion||'',loc=i.localidad||cx?.localidad||'';
+  return `<button class="back" data-act="back">← Propiedades</button>
+  <div class="head"><div><h1>${esc(i.alias)}</h1><p>${esc(dir)}${loc?', '+esc(loc):''}</p></div>
   ${ui.canWrite?`<div class="row-actions"><button class="btn ghost" data-act="edit" data-col="inmuebles" data-id="${esc(i.id)}">Editar</button>${c?'':addBtn('contratos','Nuevo contrato',i.id)}</div>`:''}</div>
   <div class="panel"><dl class="info">
     <div><dt>Estado</dt><dd><span class="pill ${e==='alquilado'?'p-ok':e==='mantenimiento'?'p-media':'p-neutral'}">${L.estadoInm[e]}</span></dd></div>
-    <div><dt>Propietario</dt><dd>${esc(nom(i.propietarioId))}</dd></div>
+    ${cx?`<div><dt>Complejo</dt><dd>${esc(cx.nombre)}</dd></div><div><dt>Administra</dt><dd>${esc(cx.inmobiliaria||'—')}${cx.inmobiliariaTel?'<br>'+esc(cx.inmobiliariaTel):''}</dd></div>`:''}
+    <div><dt>Propietario</dt><dd>${esc(nom(i.propietarioId||cx?.propietarioId))}</dd></div>
     <div><dt>Ambientes</dt><dd>${esc(i.ambientes??'—')}</dd></div>
     <div><dt>Superficie</dt><dd>${i.superficie?esc(i.superficie)+' m²':'—'}</dd></div>
     <div><dt>Extras</dt><dd>${[i.cochera&&'Cochera',i.amoblado&&'Amoblado'].filter(Boolean).join(', ')||'—'}</dd></div>
@@ -490,7 +517,7 @@ function conRow(c){
 function vContratos(){
   const all=Object.values(S.contratos).sort((a,b)=>String(a.fin).localeCompare(String(b.fin)));
   const list=ui.conF==='todos'?all:all.filter(c=>(c.estado||'vigente')===ui.conF);
-  return `<div class="head"><div><h1>Contratos</h1><p>${all.filter(c=>c.estado==='vigente').length} vigentes</p></div>${addBtn('contratos','Nuevo contrato')}</div>
+  return `<div class="head"><div><h1>Contratos</h1><p>${all.filter(c=>c.estado==='vigente').length} vigentes</p></div><div class="row-actions">${fotoBtn()}${addBtn('contratos','Nuevo contrato')}</div></div>
   ${chips('conF',[['vigente','Vigentes'],['finalizado','Finalizados'],['todos','Todos']])}
   ${list.length?`<div class="rows">${list.map(conRow).join('')}</div>`:empty('No hay contratos acá','Cargá un contrato con sus fechas, monto y el PDF firmado.',addBtn('contratos','Cargar contrato'))}`;
 }
@@ -542,13 +569,13 @@ function svcRow(s){
   return `<div class="r">
     <button class="main" style="background:none;border:0;padding:0;text-align:left;cursor:pointer;font-weight:600" data-act="edit" data-col="servicios" data-id="${esc(s.id)}">${esc(L.tipoServ[s.tipo]||'Servicio')}${s.periodo?' · '+esc(s.periodo):''}<small>${esc(ali(s.inmuebleId))}${s.empresa?' · '+esc(s.empresa):''}${s.cuenta?' · Cta. '+esc(s.cuenta):''}</small></button>
     <span class="sub">Vence ${fmtF(s.vence)} · Paga ${esc((L.resp[s.responsable]||'a definir').toLowerCase())}<br><span class="amt">${money(s.monto,s.moneda)}</span></span>
-    <span class="end">${pill}${!s.pagado&&ui.canWrite?`<button class="btn sm" data-act="svc-pay" data-id="${esc(s.id)}">Pagado</button><button class="btn sm ghost" data-act="svc-next" data-id="${esc(s.id)}" title="Lo marca pagado y crea el vencimiento del mes que viene">Pagado + próximo mes</button>`:''}</span>
+    <span class="end">${pill}${s.fotoId?`<button class="btn sm ghost" data-act="ver-doc" data-id="${esc(s.fotoId)}">Ver foto</button>`:''}${!s.pagado&&ui.canWrite?`<button class="btn sm" data-act="svc-pay" data-id="${esc(s.id)}">Pagado</button><button class="btn sm ghost" data-act="svc-next" data-id="${esc(s.id)}" title="Lo marca pagado y crea el vencimiento del mes que viene">Pagado + próximo mes</button>`:''}</span>
   </div>`;
 }
 function vServicios(){
   const all=Object.values(S.servicios);
   const list=all.filter(s=>ui.svcF==='todos'||(ui.svcF==='pend'?!s.pagado:s.pagado)).sort((a,b)=>ui.svcF==='pagados'?String(b.vence).localeCompare(String(a.vence)):String(a.vence).localeCompare(String(b.vence)));
-  return `<div class="head"><div><h1>Impuestos y servicios</h1><p>Expensas, luz, agua, gas, tasas: quién paga y cuándo vence.</p></div>${addBtn('servicios','Nuevo vencimiento')}</div>
+  return `<div class="head"><div><h1>Impuestos y servicios</h1><p>Expensas, luz, agua, gas, tasas: quién paga y cuándo vence.</p></div><div class="row-actions">${fotoBtn('Cargar boleta con foto')}${addBtn('servicios','Nuevo vencimiento')}</div></div>
   ${chips('svcF',[['pend','Sin pagar ('+all.filter(s=>!s.pagado).length+')'],['pagados','Pagados'],['todos','Todos']])}
   ${list.length?`<div class="rows">${list.map(svcRow).join('')}</div>`:empty(ui.svcF==='pend'?'Nada pendiente':'Sin registros','Cargá cada boleta con su fecha de vencimiento. "Pagado + próximo mes" te ahorra cargar la siguiente.',addBtn('servicios','Cargar vencimiento'))}`;
 }
@@ -558,14 +585,14 @@ function arrRow(a){
   return `<div class="r">
     <button class="main" style="background:none;border:0;padding:0;text-align:left;cursor:pointer;font-weight:600" data-act="edit" data-col="arreglos" data-id="${esc(a.id)}">${esc(a.titulo)}<small>${esc(ali(a.inmuebleId))} · ${a.proveedor?esc(a.proveedor):'Sin proveedor'}${a.proveedorTel?' · '+esc(a.proveedorTel):''}</small></button>
     <span class="sub">Reportado ${fmtF(a.fecha)} · Paga ${esc((L.resp[a.responsable]||'a definir').toLowerCase())}<br><span class="amt">${a.costo?money(a.costo,a.moneda):'Sin costo cargado'}</span>${a.costo?(a.pagado?' · pagado':' · sin pagar'):''}</span>
-    <span class="end"><span class="pill ${sevPill[a.prioridad]||'p-media'}">Prioridad ${esc((L.prioridad[a.prioridad]||'media').toLowerCase())}</span><span class="pill ${a.estado==='resuelto'?'p-ok':'p-neutral'}">${esc(L.estadoArr[a.estado]||'Pendiente')}</span>${next&&ui.canWrite?`<button class="btn sm ghost" data-act="arr-estado" data-id="${esc(a.id)}" data-v="${next[0]}">${next[1]}</button>`:''}</span>
+    <span class="end"><span class="pill ${sevPill[a.prioridad]||'p-media'}">Prioridad ${esc((L.prioridad[a.prioridad]||'media').toLowerCase())}</span><span class="pill ${a.estado==='resuelto'?'p-ok':'p-neutral'}">${esc(L.estadoArr[a.estado]||'Pendiente')}</span>${a.fotoId?`<button class="btn sm ghost" data-act="ver-doc" data-id="${esc(a.fotoId)}">Ver foto</button>`:''}${next&&ui.canWrite?`<button class="btn sm ghost" data-act="arr-estado" data-id="${esc(a.id)}" data-v="${next[0]}">${next[1]}</button>`:''}</span>
   </div>`;
 }
 function vArreglos(){
   const all=Object.values(S.arreglos);const o={alta:0,media:1,baja:2};
   const list=all.filter(a=>ui.arrF==='todos'||(ui.arrF==='abiertos'?a.estado!=='resuelto':a.estado==='resuelto')).sort((a,b)=>(o[a.prioridad]??1)-(o[b.prioridad]??1)||String(b.fecha).localeCompare(String(a.fecha)));
   const gasto={};all.filter(a=>a.costo).forEach(a=>{const k=(a.moneda||'ARS');gasto[k]=(gasto[k]||0)+(+a.costo||0)});
-  return `<div class="head"><div><h1>Arreglos y mantenimiento</h1><p>Gasto total cargado: <span class="num">${Object.entries(gasto).map(([c,n])=>money(n,c)).join(' + ')||'$ 0'}</span></p></div>${addBtn('arreglos','Nuevo arreglo')}</div>
+  return `<div class="head"><div><h1>Arreglos y mantenimiento</h1><p>Gasto total cargado: <span class="num">${Object.entries(gasto).map(([c,n])=>money(n,c)).join(' + ')||'$ 0'}</span></p></div><div class="row-actions">${fotoBtn()}${addBtn('arreglos','Nuevo arreglo')}</div></div>
   ${chips('arrF',[['abiertos','Abiertos ('+all.filter(a=>a.estado!=='resuelto').length+')'],['resueltos','Resueltos'],['todos','Todos']])}
   ${list.length?`<div class="rows">${list.map(arrRow).join('')}</div>`:empty('Sin arreglos acá','Registrá cada problema: qué pasó, quién lo arregla, cuánto cuesta y a quién le corresponde pagarlo.',addBtn('arreglos','Registrar arreglo'))}`;
 }
@@ -585,6 +612,7 @@ function vPersonas(){
 
 /* ---------- formularios ---------- */
 const optInm=()=>sorted('inmuebles','alias').map(i=>[i.id,i.alias]);
+const optCx=()=>sorted('complejos','nombre').map(c=>[c.id,c.nombre]);
 const optPer=rol=>()=>{const all=sorted('personas','nombre');const f=all.filter(p=>p.rol===rol);return (f.length?f:all).map(p=>[p.id,p.nombre+(f.length?'':` (${(L.rol[p.rol]||'').toLowerCase()})`)])};
 const FORMS={
   personas:{t:'persona',fields:[
@@ -595,9 +623,22 @@ const FORMS={
     {k:'email',l:'Email',t:'email'},
     {k:'domicilio',l:'Domicilio',full:1},
     {k:'notas',l:'Notas',t:'textarea'}]},
+  complejos:{t:'complejo',fields:[
+    {k:'nombre',l:'Nombre del complejo',req:1,ph:'La Juana'},
+    {k:'unidades',l:'Cantidad de departamentos',t:'number',req:1,def:4,hint:'Se crean solos: Depto 1, Depto 2… Si después sumás más, se agregan.'},
+    {k:'direccion',l:'Dirección',ph:'Calle y número'},
+    {k:'localidad',l:'Localidad',ph:'Ciudad, Mendoza'},
+    {k:'propietarioId',l:'Propietario',t:'select',opt:optPer('propietario'),blank:'Sin asignar'},
+    {k:'inmobiliaria',l:'Inmobiliaria o agente que lo administra',ph:'Nombre de la inmobiliaria'},
+    {k:'inmobiliariaTel',l:'Teléfono de la inmobiliaria',t:'tel'},
+    {k:'inmobiliariaEmail',l:'Email de la inmobiliaria',t:'email'},
+    {k:'notas',l:'Notas',t:'textarea'}],
+    check(d){if(!(d.unidades>=1&&d.unidades<=60))return 'La cantidad de departamentos tiene que ser entre 1 y 60.'}},
   inmuebles:{t:'departamento',fields:[
-    {k:'alias',l:'Nombre corto',req:1,ph:'Depto Centro 3B',hint:'Como lo vas a reconocer en la lista.'},
-    {k:'direccion',l:'Dirección',req:1,ph:'Calle, número, piso y depto'},
+    {k:'alias',l:'Nombre',req:1,ph:'La Juana · Depto 1',hint:'Como lo vas a reconocer en la lista.'},
+    {k:'complejoId',l:'Complejo',t:'select',opt:optCx,blank:'Ninguno (depto suelto)'},
+    {k:'unidad',l:'Número de departamento',ph:'1'},
+    {k:'direccion',l:'Dirección',ph:'Si está en un complejo, podés dejarla vacía'},
     {k:'localidad',l:'Localidad',ph:'Ciudad, Mendoza'},
     {k:'propietarioId',l:'Propietario',t:'select',opt:optPer('propietario'),blank:'Sin asignar'},
     {k:'ambientes',l:'Ambientes',t:'number'},
@@ -608,7 +649,7 @@ const FORMS={
     {k:'notas',l:'Notas',t:'textarea'}]},
   contratos:{t:'contrato',fields:[
     {k:'inmuebleId',l:'Departamento',t:'select',opt:optInm,blank:'Elegir…',req:1},
-    {k:'inquilinoId',l:'Inquilino',t:'select',opt:optPer('inquilino'),blank:'Elegir…',req:1},
+    {k:'inquilinoId',l:'Inquilino',t:'select',opt:optPer('inquilino'),blank:'Elegir… (o escribí uno nuevo abajo)'},
     {k:'inicio',l:'Fecha de inicio',t:'date',req:1},
     {k:'fin',l:'Fecha de fin',t:'date',req:1},
     {k:'monto',l:'Alquiler mensual',t:'number',req:1},
@@ -666,8 +707,13 @@ function fieldHTML(f,val){
   else inp=`<input id="${id}" name="${f.k}" type="${f.t||'text'}" value="${esc(val??'')}" placeholder="${esc(f.ph||'')}"${f.t==='number'?' inputmode="decimal" step="any" min="0"':''}>`;
   return `<div class="fld${f.full||f.t==='textarea'?' full':''}"><label for="${id}">${esc(f.l)}${f.req?' <b>*</b>':''}</label>${inp}${f.hint?`<small>${esc(f.hint)}</small>`:''}</div>`;
 }
-function contratoExtras(doc){
-  let h=`<div class="fld full"><label for="f_archivo">Contrato firmado (PDF o foto)</label>${assets
+function fotoExtras(doc){
+  return `<div class="fld full"><label for="f_archivo">Foto o comprobante</label><input type="file" id="f_archivo" name="archivo" accept="image/*,application/pdf">${doc?.fotoId?`<small>Ya tiene una foto adjunta. Si elegís otra, la reemplaza.</small>`:ui.pendingFile?'<small>Se va a adjuntar la foto que leíste.</small>':'<small>Opcional: foto de la boleta, factura o recibo.</small>'}</div>`;
+}
+function contratoExtras(doc,preset={}){
+  let h=doc?'':`<div class="fld"><label for="f_inqN">…o inquilino nuevo</label><input id="f_inqN" name="inquilinoNombre" value="${esc(preset.inquilinoNombre||'')}" placeholder="Nombre y apellido"><small>Si no está en la lista, escribilo y se crea solo al guardar.</small></div>
+    <div class="fld"><label for="f_inqD">DNI y teléfono del inquilino nuevo</label><div style="display:flex;gap:8px"><input id="f_inqD" name="inquilinoDni" value="${esc(preset.inquilinoDni||'')}" placeholder="DNI"><input id="f_inqT" name="inquilinoTelefono" type="tel" value="${esc(preset.inquilinoTelefono||'')}" placeholder="Teléfono"></div></div>`;
+  h+=`<div class="fld full"><label for="f_archivo">Contrato firmado (PDF o foto)</label>${assets
     ?`<input type="file" id="f_archivo" name="archivo" accept="application/pdf,image/jpeg,image/png,image/webp">${doc?.docId?`<small>Ya tiene adjunto: ${esc(doc.docNombre||'contrato')}. Si elegís otro archivo, lo reemplaza.</small>`:'<small>PDF, JPG o PNG de hasta 20 MB.</small>'}`
     :'<small>Para adjuntar archivos tenés que ser editor de esta app. Podés pegar un link de Drive en el campo de arriba.</small>'}</div>`;
   if(!doc)h+=`<fieldset class="svc"><legend>Impuestos y servicios de este contrato</legend>
@@ -685,11 +731,11 @@ function openForm(col,id,preset={}){
   const val=f=>doc?doc[f.k]:(preset[f.k]??(typeof f.def==='function'?f.def():f.def));
   dlg.innerHTML=`<form id="f" novalidate>
     <header class="dh"><h2>${id?'Editar':'Nuevo'} ${def.t}</h2><button type="button" class="x" data-act="close" aria-label="Cerrar">×</button></header>
-    <div class="db"><div class="fgrid">${def.fields.map(f=>fieldHTML(f,val(f))).join('')}${col==='contratos'?contratoExtras(doc):''}</div></div>
+    <div class="db">${ui.fotoBanner?`<div class="note info">${esc(ui.fotoBanner)}</div>`:''}<div class="fgrid">${def.fields.map(f=>fieldHTML(f,val(f))).join('')}${col==='contratos'?contratoExtras(doc,preset):''}${col==='servicios'||col==='arreglos'?fotoExtras(doc):''}</div></div>
     <footer class="df">${id&&ui.canWrite?`<button type="button" class="btn ghost danger" data-act="del" data-col="${col}" data-id="${esc(id)}">Eliminar</button>`:''}<span class="sp"></span>
       <p class="ferr" id="ferr" hidden></p><button type="button" class="btn ghost" data-act="close">Cancelar</button><button class="btn" type="submit" id="fsave"${ui.canWrite?'':' disabled'}>${id?'Guardar cambios':'Guardar'}</button></footer>
   </form>`;
-  dlg.showModal();
+  if(!dlg.open)dlg.showModal();
   $('#f').addEventListener('submit',e=>{e.preventDefault();submitForm(col,id,e.target)});
 }
 function ferr(m){const e=$('#ferr');e.textContent=m;e.hidden=false}
@@ -706,18 +752,34 @@ async function submitForm(col,id,form){
     if(f.t==='check')v=el.checked;else if(f.t==='number')v=el.value===''?null:Number(el.value);else v=el.value.trim();
     if(f.req&&(v===''||v==null||Number.isNaN(v)))faltan.push(f.l);data[f.k]=v}
   if(faltan.length)return ferr('Completá: '+faltan.join(', ')+'.');
+  if(col==='contratos'&&!data.inquilinoId&&!form.elements.inquilinoNombre?.value.trim())return ferr('Elegí el inquilino de la lista o escribí el nombre del inquilino nuevo.');
   const m=def.check?.(data,id);if(m)return ferr(m);
   let svc={rows:[]};if(col==='contratos'&&!id){svc=svcRows(form);if(svc.err)return ferr(svc.err)}
   if(col==='arreglos'&&data.estado==='resuelto'&&!(id&&S.arreglos[id]?.fechaResuelto))data.fechaResuelto=HOY;
   const b=$('#fsave');b.disabled=true;b.textContent='Guardando…';$('#ferr').hidden=true;
   try{
     if(col==='contratos')await guardarContrato(id,data,form,svc.rows);
-    else await save(col,id,data);
+    else if(col==='complejos')await guardarComplejo(id,data);
+    else{
+      if(col==='servicios'||col==='arreglos'){const file=form.elements.archivo?.files?.[0]||ui.pendingFile;
+        if(file){const r=await assets.upload(file,{type:file.type||'image/jpeg'});data.fotoId=r.id;data.fotoNombre=file.name||'foto'}}
+      await save(col,id,data);
+    }
     dlg.close();toast(id?'Cambios guardados':'Guardado');
   }catch(e){ferr(errMsg(e));b.disabled=false;b.textContent=id?'Guardar cambios':'Guardar'}
 }
+async function guardarComplejo(id,data){
+  const old=id?S.complejos[id]:null;
+  const cid=await save('complejos',id,data);
+  const us=unidadesDe(cid),nums=new Set(us.map(i=>String(i.unidad)));
+  if(old&&old.nombre!==data.nombre)for(const i of us)if(String(i.alias||'').startsWith(old.nombre+' · '))await save('inmuebles',i.id,{alias:data.nombre+' · '+i.alias.slice(old.nombre.length+3)});
+  for(let k=1;k<=data.unidades;k++)if(!nums.has(String(k)))
+    await save('inmuebles',null,{alias:`${data.nombre} · Depto ${k}`,complejoId:cid,unidad:String(k),direccion:'',localidad:'',propietarioId:data.propietarioId||'',estado:'libre',ambientes:null,superficie:null,cochera:false,amoblado:false,notas:''});
+}
 async function guardarContrato(id,data,form,rows){
-  const file=form.elements.archivo?.files?.[0];
+  const nuevo=form.elements.inquilinoNombre?.value.trim();
+  if(!data.inquilinoId&&nuevo)data.inquilinoId=await save('personas',null,{nombre:nuevo,rol:'inquilino',dni:form.elements.inquilinoDni?.value.trim()||'',telefono:form.elements.inquilinoTelefono?.value.trim()||'',email:'',domicilio:'',notas:''});
+  const file=form.elements.archivo?.files?.[0]||ui.pendingFile;
   if(file){if(!assets)throw{code:'noassets'};
     const ext=file.name.split('.').pop().toLowerCase();
     const type=file.type||({pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp'})[ext];
@@ -726,6 +788,88 @@ async function guardarContrato(id,data,form,rows){
   const inm=I(data.inmuebleId);
   if(inm){const nuevo=data.estado==='vigente'?'alquilado':(inm.estado==='alquilado'?'libre':inm.estado);if(inm.estado!==nuevo)await save('inmuebles',inm.id,{estado:nuevo})}
   for(const s of rows)await save('servicios',null,{...s,inmuebleId:data.inmuebleId,contratoId:cid,pagado:false,moneda:'ARS',empresa:'',cuenta:'',periodo:'',notas:''});
+}
+
+/* ---------- carga por foto ---------- */
+const CAM='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>';
+const fotoBtn=(t='Cargar con foto')=>ui.canWrite?`<button class="btn foto" data-act="foto">${CAM}${esc(t)}</button>`:'';
+dlg.addEventListener('close',()=>{ui.pendingFile=null;ui.fotoBanner=null;ui.pagoFoto=null});
+$('#fotoIn').addEventListener('change',e=>{const f=e.target.files?.[0];e.target.value='';if(f)procesarFoto(f)});
+const b64=blob=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(blob)});
+async function prepararImagen(file){
+  const t=file.type||'';
+  if(t==='application/pdf')return{data:await b64(file),mime:t};
+  try{
+    const bmp=await createImageBitmap(file),k=Math.min(1,1800/Math.max(bmp.width,bmp.height));
+    const c=document.createElement('canvas');c.width=Math.round(bmp.width*k);c.height=Math.round(bmp.height*k);
+    c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
+    const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.85));if(!blob)throw 0;
+    return{data:await b64(blob),mime:'image/jpeg'};
+  }catch{if(/^image\/(jpeg|png|webp|heic|heif)$/.test(t))return{data:await b64(file),mime:t};throw{foto:'formato'}}
+}
+function msgFoto(c){return({
+  falta_clave:'La lectura de fotos todavía no está activada. Falta un paso de configuración (pedíselo a Claude).',
+  clave:'La clave de lectura de fotos no es válida. Hay que revisarla en la configuración.',
+  limite:'Se llegó al límite gratis de lecturas por ahora. Probá de nuevo en unos minutos.',
+  formato:'Ese archivo no se puede leer. Usá una foto (JPG o PNG) o un PDF.',
+  grande:'El archivo es muy grande. Sacá la foto de nuevo o achicá el PDF.',
+  sesion:'Tu sesión venció. Cerrá sesión y volvé a entrar.'
+})[c]||'No se pudo leer la foto. Revisá la conexión y probá de nuevo.'}
+function matchInm(r){
+  const txt=' '+norm([r.complejo,r.direccion,r.resumen].join(' '))+' ',un=norm(r.unidad).replace(/^(depto|departamento|dpto|unidad|dto) /,'');
+  let best=null,bs=0,tie=false;
+  for(const i of Object.values(S.inmuebles)){let s=0;const cx=CX(i.complejoId);
+    if(cx&&norm(cx.nombre)&&txt.includes(' '+norm(cx.nombre)+' '))s+=3;
+    const dir=norm(i.direccion||cx?.direccion);
+    if(dir){const calle=dir.replace(/\d+/g,'').trim().split(' ').find(w=>w.length>3);if(calle&&txt.includes(' '+calle+' '))s+=1;
+      if((dir.match(/\d+/g)||[]).some(n=>n.length>=2&&txt.includes(' '+n+' ')))s+=2}
+    if(un&&i.unidad&&norm(i.unidad)===un)s+=2;
+    if(norm(i.alias).length>3&&txt.includes(norm(i.alias)))s+=4;
+    if(s>bs){bs=s;best=i;tie=false}else if(s===bs&&s>0)tie=true}
+  return bs>=3&&!tie?best:null;
+}
+function matchPer(n){const q=norm(n);if(!q)return null;const t=q.split(' ').filter(w=>w.length>2);
+  return Object.values(S.personas).find(p=>{const pn=norm(p.nombre);return pn===q||(t.length>=2&&t.every(w=>pn.includes(w)))})||null}
+const limpio=o=>Object.fromEntries(Object.entries(o).filter(([,v])=>v!=null&&v!==''));
+const RESP_DEF={expensas:'inquilino',luz:'inquilino',agua:'inquilino',gas:'inquilino',internet:'inquilino',tasa_municipal:'propietario',inmobiliario:'propietario',seguro:'propietario'};
+async function procesarFoto(file){
+  if(file.size>15e6){toast(msgFoto('grande'));return}
+  dlg.innerHTML=`<div><header class="dh"><h2>Leyendo la foto…</h2></header><div class="db"><p class="muted" style="margin:0">Esto tarda unos segundos. Después revisás los datos y guardás.</p></div></div>`;
+  if(!dlg.open)dlg.showModal();
+  try{
+    const{data,mime}=await prepararImagen(file);
+    const contexto=Object.values(S.inmuebles).map(i=>`${i.alias}${i.direccion?' ('+i.direccion+')':''}`).join('; ');
+    const{data:res,error}=await sb.functions.invoke('leer-foto',{body:{data,mime,hoy:HOY,contexto}});
+    if(error){let code='';try{code=(await error.context.json()).error}catch{}throw{foto:code}}
+    aplicarLectura(res.resultado||{},file);
+  }catch(e){dlg.close();toast(msgFoto(e?.foto))}
+}
+function aplicarLectura(r,file){
+  const inm=matchInm(r),sinInm=inm?'':' No pude saber de qué departamento es: elegilo vos.';
+  const setPend=()=>{ui.pendingFile=file};
+  if(r.tipo==='contrato'){const c=r.contrato||{},inq=matchPer(c.inquilino),gar=matchPer(c.garante);
+    ui.fotoBanner=`Leí un contrato${c.inquilino?' de '+c.inquilino:''}. Revisá los datos antes de guardar; la foto queda adjunta.`+sinInm;
+    openForm('contratos',null,limpio({inmuebleId:inm?.id,inquilinoId:inq?.id,inquilinoNombre:inq?null:c.inquilino,inquilinoDni:c.inquilinoDni,inquilinoTelefono:c.inquilinoTelefono,garanteId:gar?.id,inicio:c.inicio,fin:c.fin,monto:c.monto,moneda:c.moneda,deposito:c.deposito,depositoMoneda:c.depositoMoneda,diaVto:c.diaVto,indice:c.indice,ajusteMeses:c.ajusteMeses,punitorio:c.punitorio}));setPend();return}
+  if(r.tipo==='servicio'){const s=r.servicio||{},tipo=L.tipoServ[s.tipo]?s.tipo:'otro';
+    ui.fotoBanner=`Leí una boleta de ${(L.tipoServ[tipo]||'servicio').toLowerCase()}${s.empresa?' ('+s.empresa+')':''}. Revisá y guardá; la foto queda adjunta.`+sinInm;
+    openForm('servicios',null,limpio({inmuebleId:inm?.id,tipo,empresa:s.empresa,cuenta:s.cuenta,periodo:s.periodo,vence:s.vence,monto:s.monto,moneda:s.moneda,responsable:RESP_DEF[tipo]}));setPend();return}
+  if(r.tipo==='arreglo'){const a=r.arreglo||{};
+    ui.fotoBanner='Leí un comprobante de arreglo. Revisá y guardá; la foto queda adjunta.'+sinInm;
+    openForm('arreglos',null,limpio({inmuebleId:inm?.id,titulo:a.titulo,proveedor:a.proveedor,proveedorTel:a.proveedorTel,costo:a.costo,moneda:a.moneda,fecha:a.fecha,descripcion:a.descripcion}));setPend();return}
+  if(r.tipo==='pago'){const p=r.pago||{},inq=matchPer(p.inquilino);
+    const c=(inm&&vigente(inm.id))||(inq&&Object.values(S.contratos).find(x=>x.estado==='vigente'&&x.inquilinoId===inq.id));
+    const per=p.periodo||(p.fecha?p.fecha.slice(0,7):null);
+    if(!c||!per){dlg.close();toast('Leí un comprobante de pago, pero no pude saber de qué contrato o mes es. Registralo desde el contrato.');return}
+    const q=cuotas(c).find(x=>x.per===per);
+    ui.pagoFoto={cid:c.id,per,fecha:p.fecha||HOY,monto:p.monto||q?.monto||c.monto};
+    dlg.innerHTML=`<div><header class="dh"><h2>Registrar cobro</h2><button type="button" class="x" data-act="close" aria-label="Cerrar">×</button></header>
+      <div class="db"><div class="note info">Leí un comprobante de pago del alquiler.</div>
+      <dl class="info"><div><dt>Departamento</dt><dd>${esc(ali(c.inmuebleId))}</dd></div><div><dt>Inquilino</dt><dd>${esc(nom(c.inquilinoId))}</dd></div>
+      <div><dt>Mes</dt><dd>${mesLabel(per)}</dd></div><div><dt>Monto</dt><dd class="num">${money(ui.pagoFoto.monto,c.moneda)}</dd></div></dl>
+      ${q?.pago?'<p class="hint">Ese mes ya figura cobrado: si confirmás, se reemplaza.</p>':''}</div>
+      <footer class="df"><span class="sp"></span><button type="button" class="btn ghost" data-act="close">Cancelar</button><button type="button" class="btn" data-act="pago-foto">Registrar cobro</button></footer></div>`;
+    setPend();return}
+  dlg.close();toast(r.resumen?`No es un contrato, boleta ni arreglo (${r.resumen}). No se cargó nada.`:'No reconocí el documento. Probá con una foto más clara.');
 }
 
 /* ---------- caja y números ---------- */
@@ -934,7 +1078,15 @@ document.addEventListener('click',async e=>{
     case 'cancel-clave':ui.recover=false;render();break;
     case 'salir':await sb.auth.signOut();break;
     case 'ver-doc':e.preventDefault();await verDoc(id);break;
-    case 'new':if(!db)return;openForm(col,null,b.dataset.inm?{inmuebleId:b.dataset.inm}:{});break;
+    case 'new':{if(!db)return;let pre={};
+      if(b.dataset.inm)pre={inmuebleId:b.dataset.inm};
+      if(b.dataset.cx){const cx=CX(b.dataset.cx),n=Math.max(0,...unidadesDe(cx.id).map(i=>parseInt(i.unidad)||0))+1;pre={complejoId:cx.id,unidad:String(n),alias:`${cx.nombre} · Depto ${n}`,propietarioId:cx.propietarioId||''}}
+      openForm(col,null,pre);break}
+    case 'foto':$('#fotoIn').click();break;
+    case 'pago-foto':{const pf=ui.pagoFoto;if(!pf)break;b.disabled=true;
+      let fotoId=null;if(ui.pendingFile){try{fotoId=(await assets.upload(ui.pendingFile,{type:ui.pendingFile.type||'image/jpeg'})).id}catch{}}
+      await save('contratos',pf.cid,{pagos:{[pf.per]:{fecha:pf.fecha,monto:pf.monto,punitorio:0,...(fotoId?{fotoId}:{})}}});
+      dlg.close();toast('Cobro registrado con su comprobante');ui.detail={type:'con',id:pf.cid,from:null};render();break}
     case 'edit':if(!db)return;openForm(col,id);break;
     case 'close':dlg.close();break;
     case 'det-con':ui.detail={type:'con',id,from:ui.detail};ui.armFin=null;render();window.scrollTo(0,0);break;
@@ -960,8 +1112,10 @@ document.addEventListener('click',async e=>{
     case 'arr-estado':b.disabled=true;await save('arreglos',id,b.dataset.v==='resuelto'?{estado:'resuelto',fechaResuelto:HOY}:{estado:b.dataset.v});toast('Arreglo actualizado');break;
     case 'del':{
       if(col==='inmuebles'&&vigente(id)){ferr('Este departamento tiene un contrato vigente. Finalizalo antes de eliminarlo.');break}
+      if(col==='complejos'&&unidadesDe(id).some(i=>Object.values(S.contratos).some(c=>c.inmuebleId===i.id))){ferr('Este complejo tiene departamentos con contratos cargados. Borrá esos contratos primero.');break}
       if(!b.classList.contains('armed')){b.classList.add('armed');b.textContent='Confirmar: eliminar';break}
       b.disabled=true;const doc=S[col][id];await remove(col,id);
+      if(col==='complejos')for(const i of unidadesDe(id))await remove('inmuebles',i.id);
       if(col==='contratos'){if(doc?.docId&&assets){try{await assets.delete(doc.docId)}catch{}}
         const inm=I(doc?.inmuebleId);if(doc?.estado==='vigente'&&inm?.estado==='alquilado')await save('inmuebles',inm.id,{estado:'libre'});
         if(ui.detail?.id===id)ui.detail=ui.detail.from||null}
